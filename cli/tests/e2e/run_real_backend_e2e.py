@@ -26,7 +26,20 @@ def run_cli(args: list[str], env: dict[str, str]) -> dict[str, Any]:
         check=False,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"CLI failed ({proc.returncode}) for args={args}\nstdout={proc.stdout}\nstderr={proc.stderr}")
+        safe_args = []
+        skip_next = False
+        for i, item in enumerate(args):
+            if skip_next:
+                skip_next = False
+                continue
+            if item in {"--password", "--token"} and i + 1 < len(args):
+                safe_args.extend([item, "***REDACTED***"])
+                skip_next = True
+            else:
+                safe_args.append(item)
+        raise RuntimeError(
+            f"CLI failed ({proc.returncode}) for args={safe_args}\nstdout={proc.stdout}\nstderr={proc.stderr}"
+        )
     try:
         return json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
