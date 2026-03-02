@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from cxpm_cli.client.api import APIClient
-from cxpm_cli.errors import APIError
+from cxpm_cli.errors import APIError, BusinessStateError
 
 
 def test_get_retries_on_transport_error():
@@ -37,6 +37,32 @@ def test_mutation_does_not_retry_when_idempotency_unavailable():
     with pytest.raises(APIError):
         client._request("POST", "/mutate", json_body={"x": 1}, mutating=True)
     assert attempts["count"] == 1
+    client.close()
+
+
+def test_mutation_500_returns_mutation_unknown_after_retries():
+    attempts = {"count": 0}
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        attempts["count"] += 1
+        return httpx.Response(500, json={"error": "boom"})
+
+    client = APIClient("http://example.test", transport=httpx.MockTransport(handler))
+    with pytest.raises(APIError) as exc:
+        client._request("POST", "/mutate", json_body={"x": 1}, mutating=True)
+    assert exc.value.error_code == "MUTATION_UNKNOWN"
+    assert attempts["count"] == 3
+    client.close()
+
+
+def test_mutation_422_preserves_validation_error():
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": [{"msg": "bad input"}]})
+
+    client = APIClient("http://example.test", transport=httpx.MockTransport(handler))
+    with pytest.raises(BusinessStateError) as exc:
+        client._request("POST", "/mutate", json_body={"x": 1}, mutating=True)
+    assert exc.value.error_code == "VALIDATION_ERROR"
     client.close()
 
 

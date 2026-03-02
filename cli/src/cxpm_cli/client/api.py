@@ -179,7 +179,7 @@ class APIClient:
                 time.sleep(_backoff(attempt, self.retry_policy))
                 continue
         if isinstance(last_error, APIError):
-            if mutating:
+            if mutating and last_error.retryable:
                 raise APIError(
                     "Mutation status unknown after retries",
                     error_code="MUTATION_UNKNOWN",
@@ -187,6 +187,13 @@ class APIClient:
                     details={"mutation_state": "unknown"},
                 ) from last_error
             raise last_error
+        if mutating and isinstance(last_error, (httpx.TimeoutException, httpx.TransportError)):
+            raise APIError(
+                "Mutation status unknown after network failure",
+                error_code="MUTATION_UNKNOWN",
+                retryable=True,
+                details={"mutation_state": "unknown"},
+            ) from last_error
         raise APIError("Network error", error_code="NETWORK_ERROR", retryable=True)
 
     def _try_refresh(self) -> bool:

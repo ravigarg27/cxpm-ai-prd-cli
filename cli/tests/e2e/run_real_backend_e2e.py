@@ -8,6 +8,7 @@ import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
+import time
 
 import httpx
 
@@ -52,6 +53,30 @@ def try_run_cli(args: list[str], env: dict[str, str]) -> tuple[dict[str, Any] | 
         return run_cli(args, env), None
     except RuntimeError as exc:
         return None, str(exc)
+
+
+def wait_for_meeting_ready(api_url: str, meeting_id: str, env: dict[str, str], timeout_seconds: int = 180) -> None:
+    start = time.time()
+    while True:
+        review = run_cli(["--json", "--api-url", api_url, "meeting", "review", meeting_id], env)
+        data = review.get("data", {})
+        # Support common backend status field naming.
+        status = (
+            data.get("status")
+            or data.get("processing_status")
+            or data.get("state")
+            or data.get("meeting_status")
+        )
+        if status is None:
+            return
+        status_text = str(status).lower()
+        if status_text in {"processed", "completed", "ready", "done", "applied"}:
+            return
+        if status_text in {"failed", "error"}:
+            raise RuntimeError(f"Meeting processing failed before apply (status={status})")
+        if time.time() - start > timeout_seconds:
+            raise RuntimeError(f"Timed out waiting for meeting readiness (last status={status})")
+        time.sleep(2)
 
 
 def create_project(client: httpx.Client, name: str) -> str:
@@ -175,6 +200,8 @@ def main() -> int:
 
     run_cli(["--json", "--api-url", args.api_url, "meeting", "review", meeting_id], env)
     print("meeting review ok")
+    wait_for_meeting_ready(args.api_url, meeting_id, env)
+    print("meeting ready for apply")
 
     apply_res = run_cli(["--json", "--api-url", args.api_url, "meeting", "apply", meeting_id], env)
     print("meeting apply ok")
