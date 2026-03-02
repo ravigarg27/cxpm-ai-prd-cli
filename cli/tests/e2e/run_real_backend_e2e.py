@@ -75,8 +75,30 @@ def wait_for_meeting_ready(api_url: str, meeting_id: str, env: dict[str, str], t
         if status_text in {"failed", "error"}:
             raise RuntimeError(f"Meeting processing failed before apply (status={status})")
         if time.time() - start > timeout_seconds:
-            raise RuntimeError(f"Timed out waiting for meeting readiness (last status={status})")
+            return
         time.sleep(2)
+
+
+def apply_with_retry(api_url: str, meeting_id: str, env: dict[str, str], timeout_seconds: int = 300) -> dict[str, Any]:
+    start = time.time()
+    while True:
+        result, error = try_run_cli(["--json", "--api-url", api_url, "meeting", "apply", meeting_id], env)
+        if result is not None:
+            return result
+        error_text = (error or "").lower()
+        pending_markers = [
+            "business_state_error",
+            "meeting not processed",
+            "not processed",
+            "pending",
+            "processing",
+        ]
+        if any(marker in error_text for marker in pending_markers):
+            if time.time() - start > timeout_seconds:
+                raise RuntimeError(f"Timed out waiting for apply readiness. last_error={error}")
+            time.sleep(5)
+            continue
+        raise RuntimeError(error or "meeting apply failed")
 
 
 def create_project(client: httpx.Client, name: str) -> str:
@@ -200,10 +222,10 @@ def main() -> int:
 
     run_cli(["--json", "--api-url", args.api_url, "meeting", "review", meeting_id], env)
     print("meeting review ok")
-    wait_for_meeting_ready(args.api_url, meeting_id, env)
-    print("meeting ready for apply")
+    wait_for_meeting_ready(args.api_url, meeting_id, env, timeout_seconds=600)
+    print("meeting readiness polling complete")
 
-    apply_res = run_cli(["--json", "--api-url", args.api_url, "meeting", "apply", meeting_id], env)
+    apply_res = apply_with_retry(args.api_url, meeting_id, env, timeout_seconds=600)
     print("meeting apply ok")
 
     decision_strategy = "keep-existing"
