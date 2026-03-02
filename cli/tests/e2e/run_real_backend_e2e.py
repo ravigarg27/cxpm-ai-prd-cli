@@ -76,6 +76,11 @@ def main() -> int:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
+    # Force deterministic local config path for E2E so token lookup is consistent across OSes.
+    e2e_config_home = ROOT / ".e2e-runtime"
+    e2e_config_home.mkdir(parents=True, exist_ok=True)
+    env["XDG_CONFIG_HOME"] = str(e2e_config_home)
+    env.pop("APPDATA", None)
 
     login = run_cli(
         [
@@ -97,7 +102,7 @@ def main() -> int:
     token = login["data"].get("access_token")
     # CLI intentionally does not output token; use stored token from local config fallback.
     # Build authenticated HTTP client using token from token file if available.
-    token_file = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")) / "cxpm-cli" / "tokens.json"
+    token_file = e2e_config_home / "cxpm-cli" / "tokens.json"
     if token_file.exists():
         raw = json.loads(token_file.read_text(encoding="utf-8"))
         profiles = raw.get("profiles", {})
