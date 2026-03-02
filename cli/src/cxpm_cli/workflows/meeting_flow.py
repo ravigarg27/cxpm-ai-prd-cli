@@ -1,0 +1,17 @@
+from __future__ import annotations
+
+from typing import Any
+
+from cxpm_cli.client.api import APIClient
+
+
+def ingest_meeting(client: APIClient, *, text: str | None, file_path: str | None) -> dict[str, Any]:
+    return client.upload_meeting(text=text, file_path=file_path)
+
+
+def review_meeting(client: APIClient, meeting_id: str) -> dict[str, Any]:
+    return client.get_meeting(meeting_id)
+
+
+def apply_meeting(client: APIClient, meeting_id: str, revision: str | None = None) -> dict[str, Any]:
+    return client.apply_meeting(meeting_id, revision=revision)

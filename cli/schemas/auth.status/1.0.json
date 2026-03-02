@@ -1,0 +1,28 @@
+{
+  "": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "command", "status", "timestamp", "request_id", "data", "error"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
+    "command": {"type": "string", "const": "auth status"},
+    "status": {"type": "string", "enum": ["success", "error"]},
+    "timestamp": {"type": "string"},
+    "request_id": {"type": "string"},
+    "data": {"type": "object"},
+    "error": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["code", "message", "retryable", "details"],
+          "properties": {
+            "code": {"type": "string"},
+            "message": {"type": "string"},
+            "retryable": {"type": "boolean"},
+            "details": {"type": "object"}
+          }
+        }
+      ]
+    }
+  }
+}
