@@ -31,6 +31,7 @@ def ingest(
     ctx_: typer.Context,
     file_path: str | None = typer.Option(None, "--file"),
     text: str | None = typer.Option(None),
+    project_id: str | None = typer.Option(None, "--project-id"),
     follow: bool = typer.Option(False, "--follow"),
 ) -> None:
     ctx: AppContext = ctx_.obj
@@ -39,7 +40,7 @@ def ingest(
         if not file_path and not text:
             raise UsageError("Provide --file or --text", error_code="INGEST_INPUT_REQUIRED")
         client = ctx.build_client()
-        result = ingest_meeting(client, text=text, file_path=file_path)
+        result = ingest_meeting(client, text=text, file_path=file_path, project_id=project_id)
         if follow:
             meeting_id = result.get("meeting_id")
             if not meeting_id:

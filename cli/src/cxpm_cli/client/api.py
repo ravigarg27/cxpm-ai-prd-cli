@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -96,6 +97,8 @@ class APIClient:
         path: str,
         *,
         json_body: dict[str, Any] | None = None,
+        data_body: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         mutating: bool = False,
         revision: str | None = None,
@@ -113,7 +116,15 @@ class APIClient:
         last_error: Exception | None = None
         for attempt in range(self.retry_policy.max_attempts):
             try:
-                response = self._client.request(method, path, json=json_body, params=params, headers=headers)
+                response = self._client.request(
+                    method,
+                    path,
+                    json=json_body,
+                    data=data_body,
+                    files=files,
+                    params=params,
+                    headers=headers,
+                )
                 if response.status_code == 401:
                     if self._try_refresh():
                         headers = self._base_headers()
@@ -260,13 +271,60 @@ class APIClient:
         except APIError:
             return {"revoked": False}
 
-    def upload_meeting(self, *, text: str | None, file_path: str | None) -> dict[str, Any]:
-        body: dict[str, Any] = {}
+    def upload_meeting(self, *, text: str | None, file_path: str | None, project_id: str | None = None) -> dict[str, Any]:
+        text_attempts: list[dict[str, Any]] = []
+        file_attempts: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
+
         if text:
-            body["text"] = text
+            text_attempts = [
+                {"text": text},
+                {"transcript_text": text},
+                {"content": text},
+            ]
+            if project_id:
+                for item in text_attempts:
+                    item["project_id"] = project_id
+
         if file_path:
-            body["file_path"] = os.path.abspath(file_path)
-        return self._request("POST", "/api/meetings/upload", json_body=body, mutating=True)
+            path = Path(file_path)
+            file_bytes = path.read_bytes()
+            base_data: dict[str, Any] = {"project_id": project_id} if project_id else {}
+            file_attempts = [
+                ("file", {"file": (path.name, file_bytes, "text/plain")}, base_data or None),
+                ("transcript_file", {"transcript_file": (path.name, file_bytes, "text/plain")}, base_data or None),
+            ]
+            decoded = file_bytes.decode("utf-8", errors="ignore")
+            if decoded.strip():
+                payload = {"text": decoded}
+                if project_id:
+                    payload["project_id"] = project_id
+                text_attempts.append(payload)
+
+        last_error: Exception | None = None
+
+        for payload in text_attempts:
+            try:
+                return self._request("POST", "/api/meetings/upload", json_body=payload, mutating=True)
+            except BusinessStateError as exc:
+                last_error = exc
+                continue
+
+        for _, files_payload, data_payload in file_attempts:
+            try:
+                return self._request(
+                    "POST",
+                    "/api/meetings/upload",
+                    data_body=data_payload,
+                    files=files_payload,
+                    mutating=True,
+                )
+            except BusinessStateError as exc:
+                last_error = exc
+                continue
+
+        if last_error:
+            raise last_error
+        raise APIError("Meeting ingest requires text or file", error_code="INGEST_INPUT_REQUIRED")
 
     def get_meeting(self, meeting_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/meetings/{meeting_id}")

@@ -5,8 +5,14 @@ from typing import Any
 from cxpm_cli.client.api import APIClient
 
 
-def ingest_meeting(client: APIClient, *, text: str | None, file_path: str | None) -> dict[str, Any]:
-    return client.upload_meeting(text=text, file_path=file_path)
+def ingest_meeting(
+    client: APIClient,
+    *,
+    text: str | None,
+    file_path: str | None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    return client.upload_meeting(text=text, file_path=file_path, project_id=project_id)
 
 
 def review_meeting(client: APIClient, meeting_id: str) -> dict[str, Any]:

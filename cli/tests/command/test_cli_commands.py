@@ -35,8 +35,8 @@ class FakeClient:
     def logout(self):
         return {"revoked": True}
 
-    def upload_meeting(self, *, text=None, file_path=None):
-        return {"meeting_id": "m1", "status": "uploaded", "input": text or file_path}
+    def upload_meeting(self, *, text=None, file_path=None, project_id=None):
+        return {"meeting_id": "m1", "status": "uploaded", "input": text or file_path, "project_id": project_id}
 
     def get_meeting(self, meeting_id):
         return {"meeting_id": meeting_id, "apply_result": {"conflicts": [], "revision": "rev1"}}

@@ -124,6 +124,8 @@ def main() -> int:
             "ingest",
             "--file",
             str(transcript_path),
+            "--project-id",
+            project_id,
         ],
         env,
     )

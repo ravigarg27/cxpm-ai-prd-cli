@@ -115,3 +115,26 @@ def test_me_parses_id_field_shape():
     assert me.user_id == "u-1"
     assert me.email == "user@example.com"
     client.close()
+
+
+def test_upload_meeting_falls_back_to_multipart_file_shape(runtime_root):
+    calls = {"count": 0}
+    sample = runtime_root / "sample-upload.txt"
+    sample.write_text("hello transcript", encoding="utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/meetings/upload":
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return httpx.Response(422, json={"detail": "invalid json payload"})
+            return httpx.Response(200, json={"meeting_id": "m1"})
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    client.detect_capabilities()
+    result = client.upload_meeting(text=None, file_path=str(sample), project_id="p1")
+    assert result["meeting_id"] == "m1"
+    assert calls["count"] >= 2
+    client.close()
