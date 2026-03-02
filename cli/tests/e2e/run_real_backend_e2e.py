@@ -55,7 +55,14 @@ def try_run_cli(args: list[str], env: dict[str, str]) -> tuple[dict[str, Any] | 
         return None, str(exc)
 
 
-def wait_for_meeting_ready(api_url: str, meeting_id: str, env: dict[str, str], timeout_seconds: int = 180) -> None:
+def wait_for_meeting_ready(
+    api_url: str,
+    meeting_id: str,
+    env: dict[str, str],
+    timeout_seconds: int = 180,
+    poll_seconds: int = 2,
+    verbose: bool = False,
+) -> None:
     start = time.time()
     while True:
         review = run_cli(["--json", "--api-url", api_url, "meeting", "review", meeting_id], env)
@@ -70,16 +77,25 @@ def wait_for_meeting_ready(api_url: str, meeting_id: str, env: dict[str, str], t
         if status is None:
             return
         status_text = str(status).lower()
+        if verbose:
+            print(f"meeting status: {status}")
         if status_text in {"processed", "completed", "ready", "done", "applied"}:
             return
         if status_text in {"failed", "error"}:
             raise RuntimeError(f"Meeting processing failed before apply (status={status})")
         if time.time() - start > timeout_seconds:
             return
-        time.sleep(2)
+        time.sleep(poll_seconds)
 
 
-def apply_with_retry(api_url: str, meeting_id: str, env: dict[str, str], timeout_seconds: int = 300) -> dict[str, Any]:
+def apply_with_retry(
+    api_url: str,
+    meeting_id: str,
+    env: dict[str, str],
+    timeout_seconds: int = 300,
+    poll_seconds: int = 5,
+    verbose: bool = False,
+) -> dict[str, Any]:
     start = time.time()
     while True:
         result, error = try_run_cli(["--json", "--api-url", api_url, "meeting", "apply", meeting_id], env)
@@ -94,9 +110,11 @@ def apply_with_retry(api_url: str, meeting_id: str, env: dict[str, str], timeout
             "processing",
         ]
         if any(marker in error_text for marker in pending_markers):
+            if verbose:
+                print("meeting apply still pending, retrying...")
             if time.time() - start > timeout_seconds:
                 raise RuntimeError(f"Timed out waiting for apply readiness. last_error={error}")
-            time.sleep(5)
+            time.sleep(poll_seconds)
             continue
         raise RuntimeError(error or "meeting apply failed")
 
@@ -123,6 +141,10 @@ def main() -> int:
     parser.add_argument("--password", required=True)
     parser.add_argument("--transcript", required=True)
     parser.add_argument("--project-name", default="cxpm-e2e-project")
+    parser.add_argument("--ready-timeout-seconds", type=int, default=600)
+    parser.add_argument("--apply-timeout-seconds", type=int, default=600)
+    parser.add_argument("--poll-seconds", type=int, default=2)
+    parser.add_argument("--verbose-progress", action="store_true")
     args = parser.parse_args()
 
     transcript_path = Path(args.transcript)
@@ -222,10 +244,24 @@ def main() -> int:
 
     run_cli(["--json", "--api-url", args.api_url, "meeting", "review", meeting_id], env)
     print("meeting review ok")
-    wait_for_meeting_ready(args.api_url, meeting_id, env, timeout_seconds=600)
+    wait_for_meeting_ready(
+        args.api_url,
+        meeting_id,
+        env,
+        timeout_seconds=args.ready_timeout_seconds,
+        poll_seconds=args.poll_seconds,
+        verbose=args.verbose_progress,
+    )
     print("meeting readiness polling complete")
 
-    apply_res = apply_with_retry(args.api_url, meeting_id, env, timeout_seconds=600)
+    apply_res = apply_with_retry(
+        args.api_url,
+        meeting_id,
+        env,
+        timeout_seconds=args.apply_timeout_seconds,
+        poll_seconds=max(args.poll_seconds, 1),
+        verbose=args.verbose_progress,
+    )
     print("meeting apply ok")
 
     decision_strategy = "keep-existing"
