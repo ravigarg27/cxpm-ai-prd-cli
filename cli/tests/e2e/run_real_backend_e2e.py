@@ -46,6 +46,13 @@ def run_cli(args: list[str], env: dict[str, str]) -> dict[str, Any]:
         raise RuntimeError(f"CLI output was not JSON for args={args}\nstdout={proc.stdout}") from exc
 
 
+def try_run_cli(args: list[str], env: dict[str, str]) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        return run_cli(args, env), None
+    except RuntimeError as exc:
+        return None, str(exc)
+
+
 def create_project(client: httpx.Client, name: str) -> str:
     candidates = [
         "/api/projects",
@@ -115,7 +122,7 @@ def main() -> int:
         project_id = create_project(client, args.project_name)
     print(f"project created: {project_id}")
 
-    ingest = run_cli(
+    ingest, ingest_error = try_run_cli(
         [
             "--json",
             "--api-url",
@@ -129,6 +136,27 @@ def main() -> int:
         ],
         env,
     )
+    if ingest is None:
+        transcript_text = transcript_path.read_text(encoding="utf-8", errors="ignore")
+        ingest, ingest_error_text = try_run_cli(
+            [
+                "--json",
+                "--api-url",
+                args.api_url,
+                "meeting",
+                "ingest",
+                "--text",
+                transcript_text,
+                "--project-id",
+                project_id,
+            ],
+            env,
+        )
+        if ingest is None:
+            raise RuntimeError(
+                "Ingest failed for both file and text modes.\n"
+                f"file_error={ingest_error}\ntext_error={ingest_error_text}"
+            )
     meeting_id = ingest["data"].get("meeting_id")
     if not meeting_id:
         raise RuntimeError("meeting_id missing from ingest output")

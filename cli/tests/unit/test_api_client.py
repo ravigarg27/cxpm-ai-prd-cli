@@ -138,3 +138,26 @@ def test_upload_meeting_falls_back_to_multipart_file_shape(runtime_root):
     assert result["meeting_id"] == "m1"
     assert calls["count"] >= 2
     client.close()
+
+
+def test_upload_meeting_text_includes_project_id_variants():
+    seen_payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/meetings/upload":
+            payload = json.loads(request.content.decode("utf-8")) if request.content else {}
+            seen_payloads.append(payload)
+            if "projectId" in payload and "transcript" in payload:
+                return httpx.Response(200, json={"meeting_id": "m1"})
+            return httpx.Response(422, json={"detail": "shape mismatch"})
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    client.detect_capabilities()
+    result = client.upload_meeting(text="hello", file_path=None, project_id="p1")
+    assert result["meeting_id"] == "m1"
+    assert any("project_id" in payload for payload in seen_payloads)
+    assert any("projectId" in payload for payload in seen_payloads)
+    client.close()

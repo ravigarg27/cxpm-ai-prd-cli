@@ -280,10 +280,17 @@ class APIClient:
                 {"text": text},
                 {"transcript_text": text},
                 {"content": text},
+                {"transcript": text},
             ]
             if project_id:
                 for item in text_attempts:
                     item["project_id"] = project_id
+                text_attempts.extend(
+                    [
+                        {"text": text, "projectId": project_id},
+                        {"transcript": text, "projectId": project_id},
+                    ]
+                )
 
         if file_path:
             path = Path(file_path)
@@ -292,7 +299,16 @@ class APIClient:
             file_attempts = [
                 ("file", {"file": (path.name, file_bytes, "text/plain")}, base_data or None),
                 ("transcript_file", {"transcript_file": (path.name, file_bytes, "text/plain")}, base_data or None),
+                ("transcript", {"transcript": (path.name, file_bytes, "text/plain")}, base_data or None),
+                ("meeting_file", {"meeting_file": (path.name, file_bytes, "text/plain")}, base_data or None),
             ]
+            if project_id:
+                file_attempts.extend(
+                    [
+                        ("file", {"file": (path.name, file_bytes, "text/plain")}, {"projectId": project_id}),
+                        ("transcript", {"transcript": (path.name, file_bytes, "text/plain")}, {"projectId": project_id}),
+                    ]
+                )
             decoded = file_bytes.decode("utf-8", errors="ignore")
             if decoded.strip():
                 payload = {"text": decoded}

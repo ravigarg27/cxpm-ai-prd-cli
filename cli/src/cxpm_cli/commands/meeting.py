@@ -9,7 +9,7 @@ import typer
 
 from cxpm_cli.client.sse import stream_events
 from cxpm_cli.commands.helpers import output_success, raise_or_output_error
-from cxpm_cli.errors import APIError, InterruptedError, UsageError
+from cxpm_cli.errors import APIError, CLIError, InterruptedError, UsageError
 from cxpm_cli.runtime import AppContext
 from cxpm_cli.state.store import Checkpoint, CheckpointStore
 from cxpm_cli.workflows.meeting_flow import apply_meeting, ingest_meeting, review_meeting
@@ -71,7 +71,7 @@ def ingest(
         )
         raise exc
     except Exception as exc:
-        if not isinstance(exc, (UsageError, APIError, InterruptedError)):
+        if not isinstance(exc, (CLIError,)):
             exc = APIError(str(exc), error_code="MEETING_INGEST_FAILED")
         raise_or_output_error(ctx, command, exc)
 
@@ -85,7 +85,7 @@ def review(ctx_: typer.Context, meeting_id: str) -> None:
         result = review_meeting(client, meeting_id)
         output_success(ctx, command, result)
     except Exception as exc:
-        if not isinstance(exc, APIError):
+        if not isinstance(exc, CLIError):
             exc = APIError(str(exc), error_code="MEETING_REVIEW_FAILED")
         raise_or_output_error(ctx, command, exc)
 
@@ -99,7 +99,7 @@ def apply(ctx_: typer.Context, meeting_id: str, revision: str | None = typer.Opt
         result = apply_meeting(client, meeting_id, revision=revision)
         output_success(ctx, command, result)
     except Exception as exc:
-        if not isinstance(exc, APIError):
+        if not isinstance(exc, CLIError):
             exc = APIError(str(exc), error_code="MEETING_APPLY_FAILED")
         raise_or_output_error(ctx, command, exc)
 
@@ -160,7 +160,7 @@ def resolve(
         raise_or_output_error(ctx, command, InterruptedError("Resolve interrupted"))
         raise exc
     except Exception as exc:
-        if not isinstance(exc, (APIError, UsageError, InterruptedError)):
+        if not isinstance(exc, CLIError):
             exc = APIError(str(exc), error_code="MEETING_RESOLVE_FAILED")
         raise_or_output_error(ctx, command, exc)
 
@@ -178,7 +178,7 @@ def item_add(
         result = client.create_meeting_item(meeting_id, {"text": text})
         output_success(ctx, command, result)
     except Exception as exc:
-        if not isinstance(exc, APIError):
+        if not isinstance(exc, CLIError):
             exc = APIError(str(exc), error_code="MEETING_ITEM_ADD_FAILED")
         raise_or_output_error(ctx, command, exc)
 
@@ -197,7 +197,7 @@ def item_edit(
         result = client.update_meeting_item(meeting_id, item_id, {"text": text})
         output_success(ctx, command, result)
     except Exception as exc:
-        if not isinstance(exc, APIError):
+        if not isinstance(exc, CLIError):
             exc = APIError(str(exc), error_code="MEETING_ITEM_EDIT_FAILED")
         raise_or_output_error(ctx, command, exc)
 
@@ -215,6 +215,6 @@ def item_delete(
         result = client.delete_meeting_item(meeting_id, item_id)
         output_success(ctx, command, result)
     except Exception as exc:
-        if not isinstance(exc, APIError):
+        if not isinstance(exc, CLIError):
             exc = APIError(str(exc), error_code="MEETING_ITEM_DELETE_FAILED")
         raise_or_output_error(ctx, command, exc)
