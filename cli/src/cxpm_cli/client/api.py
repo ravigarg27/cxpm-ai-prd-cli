@@ -271,7 +271,15 @@ class APIClient:
         except APIError:
             return {"revoked": False}
 
-    def upload_meeting(self, *, text: str | None, file_path: str | None, project_id: str | None = None) -> dict[str, Any]:
+    def upload_meeting(
+        self,
+        *,
+        text: str | None,
+        file_path: str | None,
+        project_id: str | None = None,
+        title: str | None = None,
+        meeting_date: str | None = None,
+    ) -> dict[str, Any]:
         text_attempts: list[dict[str, Any]] = []
         file_attempts: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
 
@@ -291,11 +299,23 @@ class APIClient:
                         {"transcript": text, "projectId": project_id},
                     ]
                 )
+            for item in text_attempts:
+                if title:
+                    item["title"] = title
+                if meeting_date:
+                    item["meeting_date"] = meeting_date
+                    item["meetingDate"] = meeting_date
 
         if file_path:
             path = Path(file_path)
             file_bytes = path.read_bytes()
-            base_data: dict[str, Any] = {"project_id": project_id} if project_id else {}
+            base_data: dict[str, Any] = {}
+            if project_id:
+                base_data["project_id"] = project_id
+            if title:
+                base_data["title"] = title
+            if meeting_date:
+                base_data["meeting_date"] = meeting_date
             file_attempts = [
                 ("file", {"file": (path.name, file_bytes, "text/plain")}, base_data or None),
                 ("transcript_file", {"transcript_file": (path.name, file_bytes, "text/plain")}, base_data or None),
@@ -305,8 +325,24 @@ class APIClient:
             if project_id:
                 file_attempts.extend(
                     [
-                        ("file", {"file": (path.name, file_bytes, "text/plain")}, {"projectId": project_id}),
-                        ("transcript", {"transcript": (path.name, file_bytes, "text/plain")}, {"projectId": project_id}),
+                        (
+                            "file",
+                            {"file": (path.name, file_bytes, "text/plain")},
+                            {
+                                "projectId": project_id,
+                                **({"title": title} if title else {}),
+                                **({"meetingDate": meeting_date} if meeting_date else {}),
+                            },
+                        ),
+                        (
+                            "transcript",
+                            {"transcript": (path.name, file_bytes, "text/plain")},
+                            {
+                                "projectId": project_id,
+                                **({"title": title} if title else {}),
+                                **({"meetingDate": meeting_date} if meeting_date else {}),
+                            },
+                        ),
                     ]
                 )
             decoded = file_bytes.decode("utf-8", errors="ignore")
@@ -314,6 +350,11 @@ class APIClient:
                 payload = {"text": decoded}
                 if project_id:
                     payload["project_id"] = project_id
+                if title:
+                    payload["title"] = title
+                if meeting_date:
+                    payload["meeting_date"] = meeting_date
+                    payload["meetingDate"] = meeting_date
                 text_attempts.append(payload)
 
         last_error: Exception | None = None

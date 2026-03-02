@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -32,6 +34,8 @@ def ingest(
     file_path: str | None = typer.Option(None, "--file"),
     text: str | None = typer.Option(None),
     project_id: str | None = typer.Option(None, "--project-id"),
+    title: str | None = typer.Option(None, "--title"),
+    meeting_date: str | None = typer.Option(None, "--meeting-date"),
     follow: bool = typer.Option(False, "--follow"),
 ) -> None:
     ctx: AppContext = ctx_.obj
@@ -39,8 +43,22 @@ def ingest(
     try:
         if not file_path and not text:
             raise UsageError("Provide --file or --text", error_code="INGEST_INPUT_REQUIRED")
+        if meeting_date:
+            try:
+                date.fromisoformat(meeting_date)
+            except ValueError as exc:
+                raise UsageError("--meeting-date must be YYYY-MM-DD", error_code="INVALID_MEETING_DATE") from exc
+        inferred_title = title or (Path(file_path).stem if file_path else "Meeting Ingest")
+        inferred_meeting_date = meeting_date or date.today().isoformat()
         client = ctx.build_client()
-        result = ingest_meeting(client, text=text, file_path=file_path, project_id=project_id)
+        result = ingest_meeting(
+            client,
+            text=text,
+            file_path=file_path,
+            project_id=project_id,
+            title=inferred_title,
+            meeting_date=inferred_meeting_date,
+        )
         if follow:
             meeting_id = result.get("meeting_id")
             if not meeting_id:

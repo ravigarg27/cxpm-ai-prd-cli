@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,8 @@ def main() -> int:
     transcript_path = Path(args.transcript)
     if not transcript_path.exists():
         raise RuntimeError(f"Transcript file not found: {transcript_path}")
+    meeting_title = transcript_path.stem.replace("_", " ").strip() or "E2E Meeting"
+    meeting_date = date.today().isoformat()
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
@@ -133,6 +136,10 @@ def main() -> int:
             str(transcript_path),
             "--project-id",
             project_id,
+            "--title",
+            meeting_title,
+            "--meeting-date",
+            meeting_date,
         ],
         env,
     )
@@ -149,6 +156,10 @@ def main() -> int:
                 transcript_text,
                 "--project-id",
                 project_id,
+                "--title",
+                meeting_title,
+                "--meeting-date",
+                meeting_date,
             ],
             env,
         )
