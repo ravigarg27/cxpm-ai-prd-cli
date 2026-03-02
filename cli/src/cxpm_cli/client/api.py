@@ -196,13 +196,55 @@ class APIClient:
         self.refresh_token = body.get("refresh_token", self.refresh_token)
         return True
 
+    def _login_with_payload(self, *, payload: dict[str, Any], as_form: bool = False) -> dict[str, Any]:
+        headers = self._base_headers()
+        response = self._client.post(
+            "/api/auth/login",
+            data=payload if as_form else None,
+            json=None if as_form else payload,
+            headers=headers,
+        )
+        if response.status_code >= 400:
+            details = response.json() if response.content else {}
+            if response.status_code in {400, 401, 422}:
+                raise AuthError(
+                    "Login payload rejected",
+                    error_code="AUTH_LOGIN_REJECTED",
+                    details=details,
+                )
+            raise AuthError(
+                f"Login failed with status {response.status_code}",
+                error_code="AUTH_LOGIN_FAILED",
+                details=details,
+            )
+        return response.json()
+
     def login(self, username: str | None = None, password: str | None = None, token: str | None = None) -> AuthLoginResponse:
         if token:
             return AuthLoginResponse(access_token=token, token_type="bearer")
         if not username or not password:
             raise AuthError("Username and password are required", error_code="AUTH_INPUT_REQUIRED")
-        payload = self._request("POST", "/api/auth/login", json_body={"username": username, "password": password})
-        return AuthLoginResponse.model_validate(payload)
+        attempts = [
+            ({"username": username, "password": password}, False),
+            ({"email": username, "password": password}, False),
+            ({"username": username, "password": password}, True),
+            ({"email": username, "password": password}, True),
+        ]
+        last_error: AuthError | None = None
+        for payload, as_form in attempts:
+            try:
+                raw = self._login_with_payload(payload=payload, as_form=as_form)
+                if "access_token" not in raw and isinstance(raw.get("data"), dict):
+                    raw = raw["data"]
+                return AuthLoginResponse.model_validate(raw)
+            except AuthError as exc:
+                last_error = exc
+                continue
+        raise AuthError(
+            "Login failed for all supported payload formats",
+            error_code="AUTH_LOGIN_FAILED",
+            details=last_error.details if last_error else {},
+        )
 
     def me(self) -> AuthMeResponse:
         payload = self._request("GET", "/api/auth/me")

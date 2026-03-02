@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -48,4 +50,36 @@ def test_detect_capabilities_unknown_when_endpoint_missing():
     caps = client.detect_capabilities()
     assert caps.compatibility_state == "unknown"
     assert client.warnings
+    client.close()
+
+
+def test_login_falls_back_to_email_payload():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            payload = {}
+            if request.content:
+                try:
+                    payload = json.loads(request.content.decode("utf-8"))
+                except Exception:
+                    payload = {}
+            if payload.get("email") == "user@example.com":
+                return httpx.Response(200, json={"access_token": "tok", "refresh_token": "ref"})
+            return httpx.Response(422, json={"detail": "email required"})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", transport=httpx.MockTransport(handler))
+    login = client.login(username="user@example.com", password="pw")
+    assert login.access_token == "tok"
+    client.close()
+
+
+def test_login_accepts_nested_data_payload():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, json={"data": {"access_token": "tok", "refresh_token": "ref"}})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", transport=httpx.MockTransport(handler))
+    login = client.login(username="u", password="p")
+    assert login.access_token == "tok"
     client.close()
