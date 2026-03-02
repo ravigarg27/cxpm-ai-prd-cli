@@ -82,6 +82,7 @@ def wait_for_meeting_ready(
     verbose: bool = False,
 ) -> None:
     start = time.time()
+    last_status: str | None = None
     while True:
         review = run_cli(["--json", "--api-url", api_url, "meeting", "review", meeting_id], env)
         data = review.get("data", {})
@@ -91,6 +92,7 @@ def wait_for_meeting_ready(
                 print("meeting status not found in review payload; continuing to apply retry loop")
             return
         status_text = str(status).lower()
+        last_status = str(status)
         if verbose:
             print(f"meeting status: {status}")
         if status_text in {"processed", "completed", "ready", "done", "applied"}:
@@ -98,7 +100,7 @@ def wait_for_meeting_ready(
         if status_text in {"failed", "error"}:
             raise RuntimeError(f"Meeting processing failed before apply (status={status})")
         if time.time() - start > timeout_seconds:
-            return
+            raise RuntimeError(f"Timed out waiting for meeting readiness (last status={last_status})")
         time.sleep(poll_seconds)
 
 
@@ -225,6 +227,7 @@ def main() -> int:
             meeting_title,
             "--meeting-date",
             meeting_date,
+            "--follow",
         ],
         env,
     )
@@ -245,6 +248,7 @@ def main() -> int:
                 meeting_title,
                 "--meeting-date",
                 meeting_date,
+                "--follow",
             ],
             env,
         )

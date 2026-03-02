@@ -138,3 +138,72 @@ def test_jira_generate_and_save(monkeypatch):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["data"]["save_result"]["saved"] is True
+
+
+def test_requirement_ls_section_filters_grouped_response(monkeypatch):
+    class SectionClient(FakeClient):
+        def list_requirements(self, project_id, *, page_size, cursor, sort, filters):
+            return {
+                "needs_and_goals": [{"id": "n1", "content": "Need"}],
+                "requirements": [{"id": "r1", "content": "Req"}],
+                "scope_and_constraints": [],
+                "risks_and_questions": [{"id": "q1", "content": "Risk"}],
+                "action_items": [{"id": "a1", "content": "Action 1"}, {"id": "a2", "content": "Action 2"}],
+            }
+
+    def builder(self: AppContext):
+        self.warnings = []
+        return SectionClient()
+
+    monkeypatch.setattr(AppContext, "build_client", builder)
+    runner = CliRunner()
+    result = runner.invoke(app, ["--json", "requirement", "ls", "--project-id", "p1", "--section", "action-items"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    data = payload["data"]
+    assert data["section"] == "action_items"
+    assert data["total_count"] == 2
+    assert len(data["action_items"]) == 2
+    assert data["needs_and_goals"] == []
+    assert data["requirements"] == []
+    assert data["scope_and_constraints"] == []
+    assert data["risks_and_questions"] == []
+
+
+def test_requirement_ls_rejects_invalid_section(monkeypatch):
+    _patch_client(monkeypatch)
+    runner = CliRunner()
+    result = runner.invoke(app, ["--json", "requirement", "ls", "--project-id", "p1", "--section", "not-a-section"])
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_SECTION"
+
+
+def test_meeting_ingest_follow_stream_includes_query_token(monkeypatch):
+    captured: dict[str, str] = {}
+
+    class FollowClient(FakeClient):
+        api_url = "http://example.test"
+        token = "tok-value"
+        _client = object()
+
+        def _base_headers(self):
+            return {"Authorization": "Bearer tok-value"}
+
+    def builder(self: AppContext):
+        self.warnings = []
+        return FollowClient()
+
+    def fake_stream_events(client, url, headers):
+        captured["url"] = url
+        captured["authorization"] = headers.get("Authorization", "")
+        yield {"item_count": 1}
+
+    monkeypatch.setattr(AppContext, "build_client", builder)
+    monkeypatch.setattr("cxpm_cli.commands.meeting.stream_events", fake_stream_events)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--json", "meeting", "ingest", "--text", "hello", "--follow"])
+    assert result.exit_code == 0
+    assert "token=tok-value" in captured["url"]
+    assert captured["authorization"] == "Bearer tok-value"

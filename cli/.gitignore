@@ -6,3 +6,4 @@ __pycache__/
 .cxpm-cli/
 .tmp/
 pytest-cache-files-*
+.e2e-runtime/

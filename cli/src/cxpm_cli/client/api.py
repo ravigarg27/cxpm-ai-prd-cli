@@ -444,10 +444,41 @@ class APIClient:
         return self._request("GET", f"/api/projects/{project_id}/requirements/export")
 
     def generate_epic(self, project_id: str, requirements_text: str | None = None) -> dict[str, Any]:
-        body = {"project_id": project_id}
-        if requirements_text:
-            body["requirements_text"] = requirements_text
-        return self._request("POST", "/api/jira-epic/generate", json_body=body, mutating=True)
+        requirements = requirements_text
+        if not requirements:
+            exported = self.export_requirements(project_id)
+            requirements = (
+                exported.get("markdown")
+                or exported.get("requirements")
+                or exported.get("text")
+            )
+        if not requirements or not str(requirements).strip():
+            raise APIError(
+                "No requirements available to generate epic",
+                error_code="JIRA_REQUIREMENTS_EMPTY",
+            )
+
+        requirements_str = str(requirements)
+        attempts = [
+            {"requirements": requirements_str},
+            {"project_id": project_id, "requirements_text": requirements_str},
+            {"projectId": project_id, "requirementsText": requirements_str},
+        ]
+        last_error: Exception | None = None
+        for body in attempts:
+            try:
+                return self._request(
+                    "POST",
+                    "/api/jira-epic/generate",
+                    json_body=body,
+                    mutating=True,
+                )
+            except BusinessStateError as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+        raise APIError("Epic generation failed", error_code="JIRA_GENERATE_FAILED")
 
     def save_stories(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/api/jira-stories/save", json_body=payload, mutating=True)

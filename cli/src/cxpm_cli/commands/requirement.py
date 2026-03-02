@@ -8,6 +8,42 @@ from cxpm_cli.runtime import AppContext
 
 app = typer.Typer(help="Requirement commands")
 
+SECTION_VALUES = (
+    "needs_and_goals",
+    "requirements",
+    "scope_and_constraints",
+    "risks_and_questions",
+    "action_items",
+)
+
+
+def _normalize_section(value: str) -> str:
+    return value.strip().lower().replace("-", "_")
+
+
+def _filter_result_by_section(result: dict, section: str) -> dict:
+    filtered = dict(result)
+    if "items" in filtered and isinstance(filtered["items"], list):
+        filtered_items = [
+            item
+            for item in filtered["items"]
+            if isinstance(item, dict) and _normalize_section(str(item.get("section", ""))) == section
+        ]
+        filtered["items"] = filtered_items
+        filtered["total_count"] = len(filtered_items)
+        filtered["section"] = section
+        return filtered
+
+    for section_key in SECTION_VALUES:
+        values = filtered.get(section_key)
+        if section_key == section:
+            filtered[section_key] = values if isinstance(values, list) else []
+        else:
+            filtered[section_key] = []
+    filtered["total_count"] = len(filtered.get(section, []))
+    filtered["section"] = section
+    return filtered
+
 
 @app.command("ls")
 def requirement_ls(
@@ -17,14 +53,35 @@ def requirement_ls(
     cursor: str | None = typer.Option(None, "--cursor"),
     sort: str | None = typer.Option(None, "--sort"),
     filters: list[str] = typer.Option([], "--filter"),
+    section: str | None = typer.Option(None, "--section"),
 ) -> None:
     ctx: AppContext = ctx_.obj
     command = "requirement ls"
     try:
         if page_size < 1 or page_size > 200:
             raise UsageError("--page-size must be between 1 and 200", error_code="INVALID_PAGE_SIZE")
+        normalized_section = None
+        if section:
+            normalized_section = _normalize_section(section)
+            if normalized_section not in SECTION_VALUES:
+                raise UsageError(
+                    "--section must be one of: needs_and_goals, requirements, scope_and_constraints, risks_and_questions, action_items",
+                    error_code="INVALID_SECTION",
+                )
+
+        effective_filters = list(filters)
+        if normalized_section:
+            effective_filters.append(f"section:{normalized_section}")
         client = ctx.build_client()
-        result = client.list_requirements(project_id, page_size=page_size, cursor=cursor, sort=sort, filters=filters)
+        result = client.list_requirements(
+            project_id,
+            page_size=page_size,
+            cursor=cursor,
+            sort=sort,
+            filters=effective_filters,
+        )
+        if normalized_section:
+            result = _filter_result_by_section(result, normalized_section)
         result.setdefault("next_cursor", None)
         result.setdefault("total_count", len(result.get("items", [])))
         output_success(ctx, command, result)

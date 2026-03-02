@@ -1,0 +1,38 @@
+CX Assistant Product – Design Sync Meeting
+Date: Jan 26
+Duration: 15 minutes
+Participants:
+- Ananya (Lead Product Designer)
+- Rahul (Senior Product Designer)
+- Meera (UX Designer)
+- Vikram (PM)
+
+---
+
+Ananya: Thanks everyone. Let’s keep this tight. Goal today is to align on goals, non-goals, and action items for the CX Assistant design.
+
+Vikram: From a product standpoint, the primary goal is clarity. The assistant should clearly explain *why* a recommendation is shown and *what* action a CSM should take next.
+
+Rahul: Agreed. Design-wise, the goal is to reduce cognitive load. Fewer surfaces, more progressive disclosure, and a strong default view.
+
+Meera: I’d add trust as a goal. The AI needs to feel predictable and auditable, not magical. Designers should make data sources and confidence visible.
+
+Ananya: Great. Let’s capture non-goals. One clear non-goal is full customization in v1. We’re not building a Figma-for-everyone scenario.
+
+Rahul: Yes, and another non-goal is replacing human judgment. The assistant supports decisions; it doesn’t auto-execute actions.
+
+Meera: Also non-goal: real-time chat for everything. The assistant is context-aware and proactive, not a generic chatbot.
+
+Ananya: Perfect. Action items next. Rahul, can you explore two layout directions for the recommendation panel—inline vs side-drawer?
+
+Rahul: Yep, I’ll have early mocks by Thursday.
+
+Ananya: Meera, please define a lightweight trust framework—confidence indicators, data freshness, and explanation patterns.
+
+Meera: Got it. I’ll share a draft doc and examples.
+
+Ananya: I’ll consolidate today’s notes and align with PM on success metrics. Vikram, anything else?
+
+Vikram: That covers it. Thanks all.
+
+Meeting adjourned.

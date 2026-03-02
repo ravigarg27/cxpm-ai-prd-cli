@@ -6,6 +6,7 @@ from datetime import date
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import typer
 
@@ -63,7 +64,10 @@ def ingest(
             meeting_id = result.get("meeting_id")
             if not meeting_id:
                 raise APIError("Missing meeting_id for follow mode", error_code="MISSING_MEETING_ID")
-            stream_url = f"{client.api_url}/api/meetings/{meeting_id}/stream"
+            if not client.token:
+                raise APIError("Follow mode requires an authenticated token", error_code="AUTH_REQUIRED")
+            stream_query = urlencode({"token": client.token})
+            stream_url = f"{client.api_url}/api/meetings/{meeting_id}/stream?{stream_query}"
             for event in stream_events(client._client, stream_url, headers=client._base_headers()):
                 if ctx.json_mode:
                     continue

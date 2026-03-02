@@ -215,3 +215,53 @@ def test_upload_meeting_includes_title_and_meeting_date():
     assert result["meeting_id"] == "m1"
     assert any(payload.get("title") == "Design Sync" for payload in seen_payloads)
     client.close()
+
+
+def test_generate_epic_uses_exported_requirements_for_backend_contract():
+    seen_generate_payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/projects/p1/requirements/export":
+            return httpx.Response(200, json={"markdown": "# Requirements\n- A"})
+        if request.url.path == "/api/jira-epic/generate":
+            payload = json.loads(request.content.decode("utf-8")) if request.content else {}
+            seen_generate_payloads.append(payload)
+            if payload.get("requirements"):
+                return httpx.Response(200, json={"epic": "Epic content"})
+            return httpx.Response(422, json={"detail": "requirements required"})
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    client.detect_capabilities()
+    result = client.generate_epic("p1")
+    assert result["epic"] == "Epic content"
+    assert seen_generate_payloads[0]["requirements"] == "# Requirements\n- A"
+    client.close()
+
+
+def test_generate_epic_falls_back_to_legacy_payload_shape():
+    seen_generate_payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/jira-epic/generate":
+            payload = json.loads(request.content.decode("utf-8")) if request.content else {}
+            seen_generate_payloads.append(payload)
+            if "requirements" in payload:
+                return httpx.Response(422, json={"detail": "legacy backend expects requirements_text"})
+            if payload.get("project_id") and payload.get("requirements_text"):
+                return httpx.Response(200, json={"title": "Epic", "description": "Desc", "stories": []})
+            return httpx.Response(422, json={"detail": "invalid shape"})
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    client.detect_capabilities()
+    result = client.generate_epic("p1", requirements_text="Req text")
+    assert result["title"] == "Epic"
+    assert seen_generate_payloads[0] == {"requirements": "Req text"}
+    assert seen_generate_payloads[1]["project_id"] == "p1"
+    assert seen_generate_payloads[1]["requirements_text"] == "Req text"
+    client.close()
