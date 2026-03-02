@@ -83,3 +83,19 @@ def test_login_accepts_nested_data_payload():
     login = client.login(username="u", password="p")
     assert login.access_token == "tok"
     client.close()
+
+
+def test_login_request_does_not_send_authorization_header():
+    seen_auth_headers = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            seen_auth_headers.append(request.headers.get("authorization"))
+            return httpx.Response(200, json={"access_token": "tok", "refresh_token": "ref"})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="stale-token", transport=httpx.MockTransport(handler))
+    login = client.login(username="u", password="p")
+    assert login.access_token == "tok"
+    assert seen_auth_headers == [None]
+    client.close()

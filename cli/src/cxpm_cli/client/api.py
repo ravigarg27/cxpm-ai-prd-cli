@@ -197,7 +197,11 @@ class APIClient:
         return True
 
     def _login_with_payload(self, *, payload: dict[str, Any], as_form: bool = False) -> dict[str, Any]:
-        headers = self._base_headers()
+        # Login must be attempted without bearer auth header to avoid stale-token interference.
+        headers = {
+            "X-CXPM-CLI-Version": self.cli_version,
+            "X-Request-Id": self.request_id,
+        }
         response = self._client.post(
             "/api/auth/login",
             data=payload if as_form else None,

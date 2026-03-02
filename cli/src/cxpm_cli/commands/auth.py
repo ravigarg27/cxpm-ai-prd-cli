@@ -29,6 +29,9 @@ def login(
             username = username or typer.prompt("Username")
             password = password or typer.prompt("Password", hide_input=True)
         login_response = client.login(username=username, password=password, token=token)
+        # Ensure follow-up /auth/me validation uses the newly issued credentials.
+        client.token = login_response.access_token
+        client.refresh_token = login_response.refresh_token
         me = client.me()
         ctx.persist_tokens(login_response.access_token, login_response.refresh_token)
         output_success(
