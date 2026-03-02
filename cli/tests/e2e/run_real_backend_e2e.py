@@ -55,6 +55,24 @@ def try_run_cli(args: list[str], env: dict[str, str]) -> tuple[dict[str, Any] | 
         return None, str(exc)
 
 
+def _extract_status(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        for key in ("status", "processing_status", "state", "meeting_status"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+        for value in payload.values():
+            nested = _extract_status(value)
+            if nested:
+                return nested
+    if isinstance(payload, list):
+        for item in payload:
+            nested = _extract_status(item)
+            if nested:
+                return nested
+    return None
+
+
 def wait_for_meeting_ready(
     api_url: str,
     meeting_id: str,
@@ -67,14 +85,10 @@ def wait_for_meeting_ready(
     while True:
         review = run_cli(["--json", "--api-url", api_url, "meeting", "review", meeting_id], env)
         data = review.get("data", {})
-        # Support common backend status field naming.
-        status = (
-            data.get("status")
-            or data.get("processing_status")
-            or data.get("state")
-            or data.get("meeting_status")
-        )
+        status = _extract_status(data)
         if status is None:
+            if verbose:
+                print("meeting status not found in review payload; continuing to apply retry loop")
             return
         status_text = str(status).lower()
         if verbose:
@@ -108,6 +122,8 @@ def apply_with_retry(
             "not processed",
             "pending",
             "processing",
+            "cannot apply meeting unless status is processed",
+            "status is processed",
         ]
         if any(marker in error_text for marker in pending_markers):
             if verbose:
