@@ -99,3 +99,19 @@ def test_login_request_does_not_send_authorization_header():
     assert login.access_token == "tok"
     assert seen_auth_headers == [None]
     client.close()
+
+
+def test_me_parses_id_field_shape():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/me":
+            return httpx.Response(200, json={"id": "u-1", "email": "user@example.com", "name": "User"})
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    client.detect_capabilities()
+    me = client.me()
+    assert me.user_id == "u-1"
+    assert me.email == "user@example.com"
+    client.close()
