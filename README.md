@@ -1,29 +1,98 @@
 # CXPM CLI
 
-Command-line interface for the CXPM workflow:
-- authenticate with the backend
-- ingest meeting transcripts
-- review/apply/resolve extracted items
-- list/export requirements
-- generate Jira epic output
+Turn meeting transcripts into structured, reviewable product requirements.
 
-The CLI supports both human-readable output and strict JSON output (`--json`) for automation.
+## What You Get Out of Meetings
 
-## Repository Layout
+After ingesting a transcript, CXPM helps you produce:
 
-- `cli/` - Python package (`cxpm-cli`) with source code and tests
-- `docs/` - design and planning docs
-- `cx_assistant_design_meeting_transcript.txt` - sample transcript for E2E testing
+- needs and goals
+- requirements
+- scope and constraints
+- risks and open questions
+- action items
+- optional Jira epic draft
 
-## Prerequisites
+You can review and resolve conflicts before anything is finalized, then export results as markdown for sharing.
 
-- Python 3.11+
-- A reachable CXPM backend API URL (for example: `http://localhost:3000`)
+## Who This Is For
 
-## Install (Editable)
+- product managers and founders
+- delivery/program managers
+- technical leads who want a fast post-meeting requirements workflow
+
+You do not need to be deeply technical to run the core flow.
+
+## Non-Technical Quickstart
+
+If someone gave you a CXPM backend URL, you can run this flow end-to-end.
+
+1. Install the CLI from this repo:
 
 ```bash
 pip install -e ./cli
+```
+
+2. Point the CLI to your CXPM backend:
+
+```bash
+cxpm config profile set --name default --api-url http://localhost:3000
+```
+
+3. Login (interactive prompt):
+
+```bash
+cxpm auth login
+```
+
+4. Find your project:
+
+```bash
+cxpm project ls
+```
+
+5. Ingest a meeting transcript:
+
+```bash
+cxpm meeting ingest --file ./cx_assistant_design_meeting_transcript.txt --project-id <PROJECT_ID> --follow
+```
+
+6. Review, apply, and resolve:
+
+```bash
+cxpm meeting review <MEETING_ID>
+cxpm meeting apply <MEETING_ID>
+cxpm meeting resolve <MEETING_ID> --decision-strategy keep-existing
+```
+
+7. Export the final requirements:
+
+```bash
+cxpm requirement export --project-id <PROJECT_ID> --out requirements.md
+```
+
+8. Optionally generate a Jira epic draft:
+
+```bash
+cxpm jira epic generate --project-id <PROJECT_ID>
+```
+
+## Command Cheat Sheet
+
+- `cxpm meeting ingest`: upload transcript text/file and start extraction
+- `cxpm meeting review`: inspect extracted items before applying
+- `cxpm meeting apply`: create proposed requirement changes
+- `cxpm meeting resolve`: resolve conflicts and finalize changes
+- `cxpm requirement ls`: list resulting requirements (supports section filter)
+- `cxpm requirement export`: export markdown for docs/sharing
+- `cxpm jira epic generate`: generate Jira-ready epic content from requirements
+
+## Technical / Automation Mode
+
+Use `--json` for machine-readable output:
+
+```bash
+cxpm --json requirement ls --project-id <PROJECT_ID> --section action-items
 ```
 
 For development dependencies:
@@ -32,72 +101,15 @@ For development dependencies:
 pip install -e ./cli[dev]
 ```
 
-## Quickstart
-
-Set backend profile:
-
-```bash
-cxpm config profile set --name default --api-url http://localhost:3000
-```
-
-Login:
-
-```bash
-cxpm auth login --username you@example.com --password 'yourPassword'
-```
-
-Create/inspect projects:
-
-```bash
-cxpm project ls
-```
-
-Ingest a meeting transcript and stream extraction:
-
-```bash
-cxpm meeting ingest --file ./cx_assistant_design_meeting_transcript.txt --project-id <PROJECT_ID> --follow
-```
-
-Review, apply, resolve:
-
-```bash
-cxpm meeting review <MEETING_ID>
-cxpm meeting apply <MEETING_ID>
-cxpm meeting resolve <MEETING_ID> --decision-strategy keep-existing
-```
-
-Requirements:
-
-```bash
-cxpm requirement ls --project-id <PROJECT_ID>
-cxpm requirement ls --project-id <PROJECT_ID> --section action-items
-cxpm requirement export --project-id <PROJECT_ID> --out requirements.md
-```
-
-Jira epic generation:
-
-```bash
-cxpm jira epic generate --project-id <PROJECT_ID>
-```
-
-## JSON Mode (Automation)
-
-All commands support `--json` for machine-readable output:
-
-```bash
-cxpm --json requirement ls --project-id <PROJECT_ID> --section action-items
-```
-
-## Run Tests
+Run tests:
 
 ```bash
 pytest cli/tests -q
 ```
 
-## Real Backend E2E
+Run real backend E2E:
 
 ```bash
-pytest cli/tests -q
 python cli/tests/e2e/run_real_backend_e2e.py \
   --api-url http://localhost:3000 \
   --username you@example.com \
@@ -105,20 +117,8 @@ python cli/tests/e2e/run_real_backend_e2e.py \
   --transcript ./cx_assistant_design_meeting_transcript.txt
 ```
 
-## Publish to GitHub
+## Repository Layout
 
-This workspace is already a git repo but currently has no remote configured.
-
-1. Authenticate GitHub CLI:
-
-```bash
-gh auth login -h github.com
-```
-
-2. Create and push a new repo:
-
-```bash
-gh repo create <your-org-or-user>/<repo-name> --private --source . --remote origin --push
-```
-
-Use `--public` instead of `--private` if you want a public repository.
+- `cli/`: Python package (`cxpm-cli`) with source code and tests
+- `docs/`: design and planning docs
+- `cx_assistant_design_meeting_transcript.txt`: sample transcript for testing
