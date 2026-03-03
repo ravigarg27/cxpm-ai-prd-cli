@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -68,8 +69,8 @@ def test_mutation_422_preserves_validation_error():
 
 def test_detect_capabilities_unknown_when_endpoint_missing():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/version":
-            return httpx.Response(404, json={"detail": "not found"})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(200, json={})
 
     client = APIClient("http://example.test", transport=httpx.MockTransport(handler))
@@ -79,7 +80,9 @@ def test_detect_capabilities_unknown_when_endpoint_missing():
     client.close()
 
 
-def test_login_falls_back_to_email_payload():
+def test_login_uses_email_payload_only():
+    seen_payloads: list[dict] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
             payload = {}
@@ -88,6 +91,7 @@ def test_login_falls_back_to_email_payload():
                     payload = json.loads(request.content.decode("utf-8"))
                 except Exception:
                     payload = {}
+            seen_payloads.append(payload)
             if payload.get("email") == "user@example.com":
                 return httpx.Response(200, json={"access_token": "tok", "refresh_token": "ref"})
             return httpx.Response(422, json={"detail": "email required"})
@@ -96,6 +100,7 @@ def test_login_falls_back_to_email_payload():
     client = APIClient("http://example.test", transport=httpx.MockTransport(handler))
     login = client.login(username="user@example.com", password="pw")
     assert login.access_token == "tok"
+    assert seen_payloads == [{"email": "user@example.com", "password": "pw"}]
     client.close()
 
 
@@ -131,8 +136,8 @@ def test_me_parses_id_field_shape():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/me":
             return httpx.Response(200, json={"id": "u-1", "email": "user@example.com", "name": "User"})
-        if request.url.path == "/api/version":
-            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={})
 
     client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
@@ -143,64 +148,51 @@ def test_me_parses_id_field_shape():
     client.close()
 
 
-def test_upload_meeting_falls_back_to_multipart_file_shape(runtime_root):
-    calls = {"count": 0}
+def test_upload_meeting_file_uses_multipart_form(runtime_root):
+    seen_paths: list[tuple[str, str]] = []
+    seen_content_types: list[str] = []
     sample = runtime_root / "sample-upload.txt"
     sample.write_text("hello transcript", encoding="utf-8")
 
     def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append((request.method, request.url.path))
         if request.url.path == "/api/meetings/upload":
-            calls["count"] += 1
-            if calls["count"] == 1:
-                return httpx.Response(422, json={"detail": "invalid json payload"})
+            seen_content_types.append(request.headers.get("content-type", ""))
             return httpx.Response(200, json={"meeting_id": "m1"})
-        if request.url.path == "/api/version":
-            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={})
 
     client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
     client.detect_capabilities()
-    result = client.upload_meeting(text=None, file_path=str(sample), project_id="p1")
+    result = client.upload_meeting(
+        text=None,
+        file_path=str(sample),
+        project_id="p1",
+        title="Design Sync",
+        meeting_date="2026-03-02",
+    )
     assert result["meeting_id"] == "m1"
-    assert calls["count"] >= 2
+    assert ("POST", "/api/meetings/upload") in seen_paths
+    assert any("multipart/form-data" in value for value in seen_content_types)
     client.close()
 
 
-def test_upload_meeting_text_includes_project_id_variants():
-    seen_payloads: list[dict] = []
+def test_upload_meeting_text_uses_form_fields():
+    seen_form_payloads: list[dict[str, str]] = []
+    seen_content_types: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/meetings/upload":
-            payload = json.loads(request.content.decode("utf-8")) if request.content else {}
-            seen_payloads.append(payload)
-            if "projectId" in payload and "transcript" in payload:
+            seen_content_types.append(request.headers.get("content-type", ""))
+            raw = request.content.decode("utf-8") if request.content else ""
+            parsed = {k: v[0] for k, v in parse_qs(raw).items()}
+            seen_form_payloads.append(parsed)
+            if parsed.get("project_id") == "p1" and parsed.get("text") == "hello":
                 return httpx.Response(200, json={"meeting_id": "m1"})
             return httpx.Response(422, json={"detail": "shape mismatch"})
-        if request.url.path == "/api/version":
-            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
-        return httpx.Response(404, json={})
-
-    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
-    client.detect_capabilities()
-    result = client.upload_meeting(text="hello", file_path=None, project_id="p1")
-    assert result["meeting_id"] == "m1"
-    assert any("project_id" in payload for payload in seen_payloads)
-    assert any("projectId" in payload for payload in seen_payloads)
-    client.close()
-
-
-def test_upload_meeting_includes_title_and_meeting_date():
-    seen_payloads: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/meetings/upload":
-            payload = json.loads(request.content.decode("utf-8")) if request.content else {}
-            seen_payloads.append(payload)
-            if payload.get("title") and (payload.get("meeting_date") or payload.get("meetingDate")):
-                return httpx.Response(200, json={"meeting_id": "m1"})
-            return httpx.Response(422, json={"detail": "missing title/date"})
-        if request.url.path == "/api/version":
-            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={})
 
     client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
@@ -213,7 +205,40 @@ def test_upload_meeting_includes_title_and_meeting_date():
         meeting_date="2026-03-02",
     )
     assert result["meeting_id"] == "m1"
-    assert any(payload.get("title") == "Design Sync" for payload in seen_payloads)
+    assert seen_form_payloads[0]["title"] == "Design Sync"
+    assert seen_form_payloads[0]["meeting_date"] == "2026-03-02"
+    assert seen_form_payloads[0]["project_id"] == "p1"
+    assert seen_form_payloads[0]["text"] == "hello"
+    assert all("application/json" not in value for value in seen_content_types)
+    client.close()
+
+
+def test_upload_meeting_includes_title_and_meeting_date():
+    seen_form_payloads: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/meetings/upload":
+            raw = request.content.decode("utf-8") if request.content else ""
+            parsed = {k: v[0] for k, v in parse_qs(raw).items()}
+            seen_form_payloads.append(parsed)
+            if parsed.get("title") and parsed.get("meeting_date"):
+                return httpx.Response(200, json={"meeting_id": "m1"})
+            return httpx.Response(422, json={"detail": "missing title/date"})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    client.detect_capabilities()
+    result = client.upload_meeting(
+        text="hello",
+        file_path=None,
+        project_id="p1",
+        title="Design Sync",
+        meeting_date="2026-03-02",
+    )
+    assert result["meeting_id"] == "m1"
+    assert any(payload.get("title") == "Design Sync" for payload in seen_form_payloads)
     client.close()
 
 
@@ -229,8 +254,8 @@ def test_generate_epic_uses_exported_requirements_for_backend_contract():
             if payload.get("requirements"):
                 return httpx.Response(200, json={"epic": "Epic content"})
             return httpx.Response(422, json={"detail": "requirements required"})
-        if request.url.path == "/api/version":
-            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={})
 
     client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
@@ -241,20 +266,18 @@ def test_generate_epic_uses_exported_requirements_for_backend_contract():
     client.close()
 
 
-def test_generate_epic_falls_back_to_legacy_payload_shape():
+def test_generate_epic_posts_requirements_only_payload():
     seen_generate_payloads: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/jira-epic/generate":
             payload = json.loads(request.content.decode("utf-8")) if request.content else {}
             seen_generate_payloads.append(payload)
-            if "requirements" in payload:
-                return httpx.Response(422, json={"detail": "legacy backend expects requirements_text"})
-            if payload.get("project_id") and payload.get("requirements_text"):
+            if payload == {"requirements": "Req text"}:
                 return httpx.Response(200, json={"title": "Epic", "description": "Desc", "stories": []})
             return httpx.Response(422, json={"detail": "invalid shape"})
-        if request.url.path == "/api/version":
-            return httpx.Response(200, json={"compatible": True, "features": {"idempotency": True, "revision_conflict": True}})
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={})
 
     client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
@@ -262,8 +285,38 @@ def test_generate_epic_falls_back_to_legacy_payload_shape():
     result = client.generate_epic("p1", requirements_text="Req text")
     assert result["title"] == "Epic"
     assert seen_generate_payloads[0] == {"requirements": "Req text"}
-    assert seen_generate_payloads[1]["project_id"] == "p1"
-    assert seen_generate_payloads[1]["requirements_text"] == "Req text"
+    assert len(seen_generate_payloads) == 1
+    client.close()
+
+
+def test_list_requirements_does_not_send_unsupported_query_params():
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/projects/p1/requirements":
+            seen_queries.append(request.url.query)
+            return httpx.Response(200, json={"requirements": []})
+        return httpx.Response(404, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    result = client.list_requirements("p1", page_size=50, cursor="abc", sort="updated_at", filters=["section:action_items"])
+    assert "requirements" in result
+    assert seen_queries == [b""]
+    client.close()
+
+
+def test_logout_is_local_only():
+    called_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        called_paths.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    result = client.logout()
+    assert result["revoked"] is False
+    assert result["remote_supported"] is False
+    assert called_paths == []
     client.close()
 
 

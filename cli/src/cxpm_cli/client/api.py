@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 import time
 from dataclasses import dataclass
@@ -54,20 +55,16 @@ class APIClient:
 
     def detect_capabilities(self) -> CapabilityInfo:
         try:
-            resp = self._client.get("/api/version", headers=self._base_headers())
-            if resp.status_code == 404:
-                raise APIError("Compatibility metadata unavailable", error_code="COMPATIBILITY_UNKNOWN")
-            payload = resp.json()
-            features = payload.get("features", {})
+            resp = self._client.get("/api/health", headers=self._base_headers())
+            if resp.status_code >= 400:
+                raise APIError("Health check failed", error_code="HEALTH_CHECK_FAILED")
             self.capabilities = CapabilityInfo(
-                idempotency=bool(features.get("idempotency", True)),
-                revision_conflict=bool(features.get("revision_conflict", True)),
-                compatibility_metadata=True,
-                compatibility_state="known",
+                idempotency=True,
+                revision_conflict=True,
+                compatibility_metadata=False,
+                compatibility_state="unknown",
             )
-            compatible = payload.get("compatible", True)
-            if not compatible:
-                raise BusinessStateError("Backend is incompatible with this CLI", error_code="BACKEND_INCOMPATIBLE")
+            self.warnings.append("Compatibility metadata endpoint unavailable; capability state is unknown")
         except (httpx.RequestError, APIError, ValueError):
             self.capabilities = CapabilityInfo(
                 idempotency=True,
@@ -75,7 +72,7 @@ class APIClient:
                 compatibility_metadata=False,
                 compatibility_state="unknown",
             )
-            self.warnings.append("Compatibility metadata unavailable; compatibility state is unknown")
+            self.warnings.append("Backend health check failed; compatibility state is unknown")
         if not self.capabilities.idempotency:
             self.warnings.append("Backend idempotency capability unavailable; mutation retries disabled")
         if not self.capabilities.revision_conflict:
@@ -126,13 +123,6 @@ class APIClient:
                     headers=headers,
                 )
                 if response.status_code == 401:
-                    if self._try_refresh():
-                        headers = self._base_headers()
-                        if idempotency_key:
-                            headers["Idempotency-Key"] = idempotency_key
-                        if revision:
-                            headers["If-Match"] = revision
-                        continue
                     raise AuthError(
                         "Session expired",
                         error_code="AUTH_EXPIRED",
@@ -196,24 +186,6 @@ class APIClient:
             ) from last_error
         raise APIError("Network error", error_code="NETWORK_ERROR", retryable=True)
 
-    def _try_refresh(self) -> bool:
-        if not self.refresh_token:
-            return False
-        resp = self._client.post(
-            "/api/auth/refresh",
-            json={"refresh_token": self.refresh_token},
-            headers={"X-CXPM-CLI-Version": self.cli_version, "X-Request-Id": self.request_id},
-        )
-        if resp.status_code >= 400:
-            return False
-        body = resp.json()
-        token = body.get("access_token")
-        if not token:
-            return False
-        self.token = token
-        self.refresh_token = body.get("refresh_token", self.refresh_token)
-        return True
-
     def _login_with_payload(self, *, payload: dict[str, Any], as_form: bool = False) -> dict[str, Any]:
         # Login must be attempted without bearer auth header to avoid stale-token interference.
         headers = {
@@ -246,37 +218,18 @@ class APIClient:
             return AuthLoginResponse(access_token=token, token_type="bearer")
         if not username or not password:
             raise AuthError("Username and password are required", error_code="AUTH_INPUT_REQUIRED")
-        attempts = [
-            ({"username": username, "password": password}, False),
-            ({"email": username, "password": password}, False),
-            ({"username": username, "password": password}, True),
-            ({"email": username, "password": password}, True),
-        ]
-        last_error: AuthError | None = None
-        for payload, as_form in attempts:
-            try:
-                raw = self._login_with_payload(payload=payload, as_form=as_form)
-                if "access_token" not in raw and isinstance(raw.get("data"), dict):
-                    raw = raw["data"]
-                return AuthLoginResponse.model_validate(raw)
-            except AuthError as exc:
-                last_error = exc
-                continue
-        raise AuthError(
-            "Login failed for all supported payload formats",
-            error_code="AUTH_LOGIN_FAILED",
-            details=last_error.details if last_error else {},
-        )
+        raw = self._login_with_payload(payload={"email": username, "password": password}, as_form=False)
+        if "access_token" not in raw and isinstance(raw.get("data"), dict):
+            raw = raw["data"]
+        return AuthLoginResponse.model_validate(raw)
 
     def me(self) -> AuthMeResponse:
         payload = self._request("GET", "/api/auth/me")
         return AuthMeResponse.model_validate(payload)
 
     def logout(self) -> dict[str, Any]:
-        try:
-            return self._request("POST", "/api/auth/logout", mutating=True)
-        except APIError:
-            return {"revoked": False}
+        # Backend does not expose an auth logout endpoint.
+        return {"revoked": False, "remote_supported": False}
 
     def upload_meeting(
         self,
@@ -287,107 +240,39 @@ class APIClient:
         title: str | None = None,
         meeting_date: str | None = None,
     ) -> dict[str, Any]:
-        text_attempts: list[dict[str, Any]] = []
-        file_attempts: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
+        if not title:
+            title = "Meeting Ingest"
+        if not meeting_date:
+            meeting_date = date.today().isoformat()
+
+        data_payload: dict[str, Any] = {
+            "title": title,
+            "meeting_date": meeting_date,
+        }
+        if project_id:
+            data_payload["project_id"] = project_id
 
         if text:
-            text_attempts = [
-                {"text": text},
-                {"transcript_text": text},
-                {"content": text},
-                {"transcript": text},
-            ]
-            if project_id:
-                for item in text_attempts:
-                    item["project_id"] = project_id
-                text_attempts.extend(
-                    [
-                        {"text": text, "projectId": project_id},
-                        {"transcript": text, "projectId": project_id},
-                    ]
-                )
-            for item in text_attempts:
-                if title:
-                    item["title"] = title
-                if meeting_date:
-                    item["meeting_date"] = meeting_date
-                    item["meetingDate"] = meeting_date
+            data_payload["text"] = text
+            return self._request(
+                "POST",
+                "/api/meetings/upload",
+                data_body=data_payload,
+                mutating=True,
+            )
 
         if file_path:
             path = Path(file_path)
             file_bytes = path.read_bytes()
-            base_data: dict[str, Any] = {}
-            if project_id:
-                base_data["project_id"] = project_id
-            if title:
-                base_data["title"] = title
-            if meeting_date:
-                base_data["meeting_date"] = meeting_date
-            file_attempts = [
-                ("file", {"file": (path.name, file_bytes, "text/plain")}, base_data or None),
-                ("transcript_file", {"transcript_file": (path.name, file_bytes, "text/plain")}, base_data or None),
-                ("transcript", {"transcript": (path.name, file_bytes, "text/plain")}, base_data or None),
-                ("meeting_file", {"meeting_file": (path.name, file_bytes, "text/plain")}, base_data or None),
-            ]
-            if project_id:
-                file_attempts.extend(
-                    [
-                        (
-                            "file",
-                            {"file": (path.name, file_bytes, "text/plain")},
-                            {
-                                "projectId": project_id,
-                                **({"title": title} if title else {}),
-                                **({"meetingDate": meeting_date} if meeting_date else {}),
-                            },
-                        ),
-                        (
-                            "transcript",
-                            {"transcript": (path.name, file_bytes, "text/plain")},
-                            {
-                                "projectId": project_id,
-                                **({"title": title} if title else {}),
-                                **({"meetingDate": meeting_date} if meeting_date else {}),
-                            },
-                        ),
-                    ]
-                )
-            decoded = file_bytes.decode("utf-8", errors="ignore")
-            if decoded.strip():
-                payload = {"text": decoded}
-                if project_id:
-                    payload["project_id"] = project_id
-                if title:
-                    payload["title"] = title
-                if meeting_date:
-                    payload["meeting_date"] = meeting_date
-                    payload["meetingDate"] = meeting_date
-                text_attempts.append(payload)
+            files_payload = {"file": (path.name, file_bytes, "text/plain")}
+            return self._request(
+                "POST",
+                "/api/meetings/upload",
+                data_body=data_payload,
+                files=files_payload,
+                mutating=True,
+            )
 
-        last_error: Exception | None = None
-
-        for payload in text_attempts:
-            try:
-                return self._request("POST", "/api/meetings/upload", json_body=payload, mutating=True)
-            except BusinessStateError as exc:
-                last_error = exc
-                continue
-
-        for _, files_payload, data_payload in file_attempts:
-            try:
-                return self._request(
-                    "POST",
-                    "/api/meetings/upload",
-                    data_body=data_payload,
-                    files=files_payload,
-                    mutating=True,
-                )
-            except BusinessStateError as exc:
-                last_error = exc
-                continue
-
-        if last_error:
-            raise last_error
         raise APIError("Meeting ingest requires text or file", error_code="INGEST_INPUT_REQUIRED")
 
     def get_meeting(self, meeting_id: str) -> dict[str, Any]:
@@ -428,14 +313,7 @@ class APIClient:
         sort: str | None,
         filters: list[str],
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"page_size": page_size}
-        if cursor:
-            params["cursor"] = cursor
-        if sort:
-            params["sort"] = sort
-        if filters:
-            params["filter"] = filters
-        return self._request("GET", f"/api/projects/{project_id}/requirements", params=params)
+        return self._request("GET", f"/api/projects/{project_id}/requirements")
 
     def list_projects(self) -> dict[str, Any]:
         return self._request("GET", "/api/projects")
@@ -465,26 +343,12 @@ class APIClient:
             )
 
         requirements_str = str(requirements)
-        attempts = [
-            {"requirements": requirements_str},
-            {"project_id": project_id, "requirements_text": requirements_str},
-            {"projectId": project_id, "requirementsText": requirements_str},
-        ]
-        last_error: Exception | None = None
-        for body in attempts:
-            try:
-                return self._request(
-                    "POST",
-                    "/api/jira-epic/generate",
-                    json_body=body,
-                    mutating=True,
-                )
-            except BusinessStateError as exc:
-                last_error = exc
-                continue
-        if last_error:
-            raise last_error
-        raise APIError("Epic generation failed", error_code="JIRA_GENERATE_FAILED")
+        return self._request(
+            "POST",
+            "/api/jira-epic/generate",
+            json_body={"requirements": requirements_str},
+            mutating=True,
+        )
 
     def save_stories(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/api/jira-stories/save", json_body=payload, mutating=True)
