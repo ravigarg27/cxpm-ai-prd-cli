@@ -53,11 +53,17 @@ class FakeBackend:
                     "skipped": [],
                     "conflicts": [
                         {
-                            "conflict_id": "c1",
-                            "existing_requirement": "A",
-                            "new_item": "B",
+                            "item_id": "i1",
+                            "item_section": "requirements",
+                            "item_content": "B",
+                            "decision": "conflict",
                             "classification": "duplicate",
                             "reason": "same goal",
+                            "matched_requirement": {
+                                "id": "r1",
+                                "section": "requirements",
+                                "content": "A",
+                            },
                         }
                     ],
                     "revision": self.meeting_revision,
@@ -66,6 +72,13 @@ class FakeBackend:
         if path == "/api/meetings/m1/resolve":
             if self.revision_conflict and request.headers.get("If-Match") != self.meeting_revision:
                 return httpx.Response(409, json={"expected_revision": self.meeting_revision})
+            payload = json.loads(request.content.decode("utf-8"))
+            decisions = payload.get("decisions", [])
+            if not decisions:
+                return httpx.Response(422, json={"detail": "decisions required"})
+            first = decisions[0]
+            if first.get("item_id") != "i1" or first.get("decision") != "conflict_keep_existing":
+                return httpx.Response(422, json={"detail": "invalid decision payload"})
             return httpx.Response(200, json={"applied": True, "resolved": 1, "remaining": 0})
         if path == "/api/projects/p1/requirements":
             return httpx.Response(

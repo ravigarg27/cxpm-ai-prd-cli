@@ -17,6 +17,7 @@ from cxpm_cli.runtime import AppContext
 from cxpm_cli.state.store import Checkpoint, CheckpointStore
 from cxpm_cli.workflows.meeting_flow import apply_meeting, ingest_meeting, review_meeting
 from cxpm_cli.workflows.resolve_flow import (
+    build_non_conflict_decisions,
     build_decisions_from_strategy,
     interactive_resolve,
     parse_decisions_file,
@@ -146,7 +147,8 @@ def resolve(
         meeting = review_meeting(client, meeting_id)
         apply_result = meeting.get("apply_result") or apply_meeting(client, meeting_id, revision=base_revision)
         conflicts: list[dict[str, Any]] = apply_result.get("conflicts", [])
-        resolved_decisions = []
+        non_conflict_decisions = build_non_conflict_decisions(apply_result)
+        resolved_conflict_decisions = []
         payload_revision = base_revision or apply_result.get("revision")
 
         if conflicts:
@@ -154,29 +156,30 @@ def resolve(
                 payload_revision_from_file, parsed = parse_decisions_file(decisions_file, meeting_id)
                 if payload_revision_from_file:
                     payload_revision = payload_revision_from_file
-                resolved_decisions = parsed
+                resolved_conflict_decisions = parsed
             elif decision_strategy:
-                resolved_decisions = build_decisions_from_strategy(conflicts, decision_strategy)
+                resolved_conflict_decisions = build_decisions_from_strategy(conflicts, decision_strategy)
             else:
                 if not os.isatty(0):
                     raise UsageError("Interactive resolve requires a TTY; use --decisions-file or --decision-strategy")
-                resolved_decisions = interactive_resolve(conflicts)
-            validate_decisions(conflicts, resolved_decisions)
-        payload = resolve_payload(payload_revision, resolved_decisions)
+                resolved_conflict_decisions = interactive_resolve(conflicts)
+            validate_decisions(conflicts, resolved_conflict_decisions)
+        payload = resolve_payload(payload_revision, non_conflict_decisions + resolved_conflict_decisions)
         checkpoint_store = CheckpointStore()
         checkpoint_store.prune()
         checkpoint_store.write(
             Checkpoint(
                 meeting_id=meeting_id,
                 base_revision=payload_revision,
-                conflicts=[item["conflict_id"] for item in conflicts],
+                conflicts=[str(item.get("item_id") or item.get("conflict_id") or "unknown") for item in conflicts],
                 decisions=payload["decisions"],
                 created_at=datetime.now(UTC).isoformat(),
             )
         )
         result = client.resolve_meeting(meeting_id, payload, revision=payload_revision)
-        result.setdefault("resolved", len(payload["decisions"]))
-        result.setdefault("remaining", max(0, len(conflicts) - len(payload["decisions"])))
+        result.setdefault("resolved", len(resolved_conflict_decisions))
+        result.setdefault("remaining", max(0, len(conflicts) - len(resolved_conflict_decisions)))
+        result.setdefault("submitted_decisions", len(payload["decisions"]))
         output_success(ctx, command, result)
     except KeyboardInterrupt as exc:
         raise_or_output_error(ctx, command, InterruptedError("Resolve interrupted"))
@@ -191,13 +194,14 @@ def resolve(
 def item_add(
     ctx_: typer.Context,
     meeting_id: str = typer.Option(..., "--meeting-id"),
-    text: str = typer.Option(..., "--text"),
+    section: str = typer.Option(..., "--section"),
+    content: str = typer.Option(..., "--content", "--text"),
 ) -> None:
     ctx: AppContext = ctx_.obj
     command = "meeting item add"
     try:
         client = ctx.build_client()
-        result = client.create_meeting_item(meeting_id, {"text": text})
+        result = client.create_meeting_item(meeting_id, {"section": section, "content": content})
         output_success(ctx, command, result)
     except Exception as exc:
         if not isinstance(exc, CLIError):
@@ -210,13 +214,13 @@ def item_edit(
     ctx_: typer.Context,
     meeting_id: str = typer.Option(..., "--meeting-id"),
     item_id: str = typer.Option(..., "--item-id"),
-    text: str = typer.Option(..., "--text"),
+    content: str = typer.Option(..., "--content", "--text"),
 ) -> None:
     ctx: AppContext = ctx_.obj
     command = "meeting item edit"
     try:
         client = ctx.build_client()
-        result = client.update_meeting_item(meeting_id, item_id, {"text": text})
+        result = client.update_meeting_item(meeting_id, item_id, {"content": content})
         output_success(ctx, command, result)
     except Exception as exc:
         if not isinstance(exc, CLIError):

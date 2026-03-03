@@ -394,13 +394,13 @@ class APIClient:
         return self._request("GET", f"/api/meetings/{meeting_id}")
 
     def update_meeting_item(self, meeting_id: str, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("PATCH", f"/api/meetings/{meeting_id}/items/{item_id}", json_body=payload, mutating=True)
+        return self._request("PUT", f"/api/meeting-items/{item_id}", json_body=payload, mutating=True)
 
     def create_meeting_item(self, meeting_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", f"/api/meetings/{meeting_id}/items", json_body=payload, mutating=True)
 
     def delete_meeting_item(self, meeting_id: str, item_id: str) -> dict[str, Any]:
-        return self._request("DELETE", f"/api/meetings/{meeting_id}/items/{item_id}", mutating=True)
+        return self._request("DELETE", f"/api/meeting-items/{item_id}", mutating=True)
 
     def apply_meeting(self, meeting_id: str, revision: str | None = None) -> dict[str, Any]:
         return self._request(
@@ -439,6 +439,12 @@ class APIClient:
 
     def list_projects(self) -> dict[str, Any]:
         return self._request("GET", "/api/projects")
+
+    def create_project(self, name: str, description: str | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"name": name}
+        if description is not None:
+            payload["description"] = description
+        return self._request("POST", "/api/projects", json_body=payload, mutating=True)
 
     def export_requirements(self, project_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/projects/{project_id}/requirements/export")

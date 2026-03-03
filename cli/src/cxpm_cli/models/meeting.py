@@ -4,11 +4,13 @@ from pydantic import BaseModel, Field
 
 
 class MeetingConflict(BaseModel):
-    conflict_id: str
-    existing_requirement: str
-    new_item: str
-    classification: str
+    item_id: str
+    item_section: str
+    item_content: str
+    decision: str
+    classification: str | None = None
     reason: str
+    matched_requirement: dict | None = None
 
 
 class MeetingApplyResponse(BaseModel):

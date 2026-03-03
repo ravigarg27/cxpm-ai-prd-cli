@@ -12,6 +12,9 @@ from cxpm_cli.runtime import AppContext
 class FakeClient:
     def __init__(self) -> None:
         self.request_id = "req-1"
+        self.last_item_create_payload = None
+        self.last_item_update_payload = None
+        self.last_resolve_payload = None
         self.capabilities = type(
             "Caps",
             (),
@@ -52,6 +55,7 @@ class FakeClient:
         return {"meeting_id": meeting_id, "added": [], "skipped": [], "conflicts": [], "revision": revision or "rev1"}
 
     def resolve_meeting(self, meeting_id, payload, revision=None):
+        self.last_resolve_payload = payload
         return {"meeting_id": meeting_id, "applied": True, "revision": revision, "payload": payload}
 
     def list_requirements(self, project_id, *, page_size, cursor, sort, filters):
@@ -72,6 +76,20 @@ class FakeClient:
 
     def list_projects(self):
         return {"items": [{"id": "p1", "name": "P"}]}
+
+    def create_project(self, name, description=None):
+        return {"id": "p2", "name": name, "description": description}
+
+    def create_meeting_item(self, meeting_id, payload):
+        self.last_item_create_payload = payload
+        return {"id": "i1", "meeting_id": meeting_id, **payload}
+
+    def update_meeting_item(self, meeting_id, item_id, payload):
+        self.last_item_update_payload = payload
+        return {"id": item_id, "meeting_id": meeting_id, **payload}
+
+    def delete_meeting_item(self, meeting_id, item_id):
+        return {"id": item_id, "meeting_id": meeting_id, "deleted": True}
 
 
 def _patch_client(monkeypatch):
@@ -113,6 +131,60 @@ def test_meeting_resolve_non_interactive_strategy(monkeypatch):
     assert payload["command"] == "meeting resolve"
 
 
+def test_meeting_resolve_includes_added_and_skipped_decisions(monkeypatch):
+    class ResolveClient(FakeClient):
+        def get_meeting(self, meeting_id):
+            return {
+                "meeting_id": meeting_id,
+                "apply_result": {
+                    "added": [{"item_id": "i1", "decision": "added"}],
+                    "skipped": [
+                        {
+                            "item_id": "i2",
+                            "decision": "skipped_duplicate",
+                            "matched_requirement": {"id": "r2"},
+                        }
+                    ],
+                    "conflicts": [
+                        {
+                            "item_id": "i3",
+                            "item_content": "new requirement text",
+                            "matched_requirement": {"id": "r3", "content": "existing text"},
+                            "classification": "refinement",
+                            "reason": "same requirement, updated wording",
+                        }
+                    ],
+                },
+            }
+
+    def builder(self: AppContext):
+        self.warnings = []
+        return ResolveClient()
+
+    monkeypatch.setattr(AppContext, "build_client", builder)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["--json", "--non-interactive", "meeting", "resolve", "m1", "--decision-strategy", "keep-existing"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    decisions = payload["data"]["payload"]["decisions"]
+    assert any(item["item_id"] == "i1" and item["decision"] == "added" for item in decisions)
+    assert any(item["item_id"] == "i2" and item["decision"] == "skipped_duplicate" for item in decisions)
+    assert any(item["item_id"] == "i3" and item["decision"] == "conflict_keep_existing" for item in decisions)
+
+
+def test_project_create_json(monkeypatch):
+    _patch_client(monkeypatch)
+    runner = CliRunner()
+    result = runner.invoke(app, ["--json", "project", "create", "--name", "New Project"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["command"] == "project create"
+    assert payload["data"]["name"] == "New Project"
+
+
 def test_requirement_ls_validates_page_size(monkeypatch):
     _patch_client(monkeypatch)
     runner = CliRunner()
@@ -138,6 +210,81 @@ def test_jira_generate_and_save(monkeypatch):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["data"]["save_result"]["saved"] is True
+
+
+def test_meeting_item_add_uses_section_and_content(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class ItemClient(FakeClient):
+        def create_meeting_item(self, meeting_id, payload):
+            captured["meeting_id"] = meeting_id
+            captured["payload"] = payload
+            return {"id": "i1", "meeting_id": meeting_id, **payload}
+
+    def builder(self: AppContext):
+        self.warnings = []
+        return ItemClient()
+
+    monkeypatch.setattr(AppContext, "build_client", builder)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "meeting",
+            "item",
+            "add",
+            "--meeting-id",
+            "m1",
+            "--section",
+            "requirements",
+            "--content",
+            "Capture deployment requirement",
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["meeting_id"] == "m1"
+    assert captured["payload"] == {
+        "section": "requirements",
+        "content": "Capture deployment requirement",
+    }
+
+
+def test_meeting_item_edit_uses_content_field(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class ItemClient(FakeClient):
+        def update_meeting_item(self, meeting_id, item_id, payload):
+            captured["meeting_id"] = meeting_id
+            captured["item_id"] = item_id
+            captured["payload"] = payload
+            return {"id": item_id, "meeting_id": meeting_id, **payload}
+
+    def builder(self: AppContext):
+        self.warnings = []
+        return ItemClient()
+
+    monkeypatch.setattr(AppContext, "build_client", builder)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "meeting",
+            "item",
+            "edit",
+            "--meeting-id",
+            "m1",
+            "--item-id",
+            "i1",
+            "--content",
+            "Updated wording",
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["meeting_id"] == "m1"
+    assert captured["item_id"] == "i1"
+    assert captured["payload"] == {"content": "Updated wording"}
 
 
 def test_requirement_ls_section_filters_grouped_response(monkeypatch):

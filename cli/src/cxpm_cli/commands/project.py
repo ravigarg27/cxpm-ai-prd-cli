@@ -21,3 +21,21 @@ def project_ls(ctx_: typer.Context) -> None:
         if not isinstance(exc, APIError):
             exc = APIError(str(exc), error_code="PROJECT_LIST_FAILED")
         raise_or_output_error(ctx, command, exc)
+
+
+@app.command("create")
+def project_create(
+    ctx_: typer.Context,
+    name: str = typer.Option(..., "--name"),
+    description: str | None = typer.Option(None, "--description"),
+) -> None:
+    ctx: AppContext = ctx_.obj
+    command = "project create"
+    try:
+        client = ctx.build_client()
+        result = client.create_project(name=name, description=description)
+        output_success(ctx, command, result)
+    except Exception as exc:
+        if not isinstance(exc, APIError):
+            exc = APIError(str(exc), error_code="PROJECT_CREATE_FAILED")
+        raise_or_output_error(ctx, command, exc)

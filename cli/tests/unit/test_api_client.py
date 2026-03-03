@@ -265,3 +265,41 @@ def test_generate_epic_falls_back_to_legacy_payload_shape():
     assert seen_generate_payloads[1]["project_id"] == "p1"
     assert seen_generate_payloads[1]["requirements_text"] == "Req text"
     client.close()
+
+
+def test_update_meeting_item_uses_meeting_items_endpoint():
+    seen_paths: list[tuple[str, str]] = []
+    seen_payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append((request.method, request.url.path))
+        if request.url.path == "/api/meeting-items/i1" and request.method == "PUT":
+            payload = json.loads(request.content.decode("utf-8")) if request.content else {}
+            seen_payloads.append(payload)
+            return httpx.Response(200, json={"id": "i1", "content": payload.get("content", "")})
+        return httpx.Response(404, json={"detail": "not found"})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    result = client.update_meeting_item("m1", "i1", {"content": "Updated"})
+    assert result["id"] == "i1"
+    assert seen_payloads[0] == {"content": "Updated"}
+    assert ("PUT", "/api/meeting-items/i1") in seen_paths
+    assert ("PATCH", "/api/meetings/m1/items/i1") not in seen_paths
+    client.close()
+
+
+def test_delete_meeting_item_uses_meeting_items_endpoint():
+    seen_paths: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append((request.method, request.url.path))
+        if request.url.path == "/api/meeting-items/i1" and request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(404, json={"detail": "not found"})
+
+    client = APIClient("http://example.test", token="tok", transport=httpx.MockTransport(handler))
+    result = client.delete_meeting_item("m1", "i1")
+    assert result.get("mutation_state") == "applied"
+    assert ("DELETE", "/api/meeting-items/i1") in seen_paths
+    assert ("DELETE", "/api/meetings/m1/items/i1") not in seen_paths
+    client.close()
